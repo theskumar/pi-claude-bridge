@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Add: claude-fable-5 model** — Anthropic's first generally available Mythos-class model (released 2026-06-09). Bumped `@earendil-works/*` peers and devDeps from 0.78.1 to 0.79.1 so the pi-ai registry supplies `claude-fable-5`. Added to the picker at the top of `MODEL_IDS_IN_ORDER`; the `fable` shortcut resolves to `claude-fable-5`. `opus` still resolves to 4.8.
+
 ## 0.5.0 — 2026-06-05
 
 - **Add: claude-opus-4-8 model** — migrated pi imports/dev peers from deprecated `@mariozechner/*` packages to `@earendil-works/*` 0.78.x so the official pi-ai registry supplies Opus 4.8. The `opus` shortcut now resolves to 4.8; 4.7/4.6 remain available for explicit pinning.

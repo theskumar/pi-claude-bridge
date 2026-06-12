@@ -58,6 +58,10 @@ describe("resolveModelId", () => {
 		assert.equal(resolveModelId(models, "haiku"), "claude-haiku-4-5");
 	});
 
+	it("fable shortcut resolves to claude-fable-5", () => {
+		assert.equal(resolveModelId(models, "fable"), "claude-fable-5");
+	});
+
 	it("full ID passes through unchanged", () => {
 		assert.equal(resolveModelId(models, "claude-opus-4-6"), "claude-opus-4-6");
 	});
