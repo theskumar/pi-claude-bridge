@@ -17,7 +17,8 @@ import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx } from "./query-state.js";
 import { makePromptStream, userMessage, type PromptStream } from "./prompt-stream.js";
-import { claudeCodeSettings, loadConfig, markStartupNoticeShown, type Config } from "./config.js";
+import { claudeCodeSettings, loadConfig, markStartupNoticeShown, resolveSystemPromptMode, type Config } from "./config.js";
+import { buildSystemPrompt } from "./system-prompt.js";
 import {
 	collectPromptSkills,
 	projectPromptCapture,
@@ -1499,11 +1500,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// custom override embeds its parent's assembled Pi prompt; recursive projection
 	// replaces that exact inherited prompt with its already-safe portable parts.
 	const promptCapture = promptCaptures.resolveOrDerive(context.systemPrompt);
-	const systemPromptAppend = promptCapture
+	const systemPromptMode = resolveSystemPromptMode(providerSettings);
+	const projectedPrompt = promptCapture && systemPromptMode !== false
 		? projectPromptCapture(promptCapture, {
 			skillReadTool: mcpTools.some((tool) => tool.name === "read") ? "mcp" : "none",
 		})
 		: undefined;
+	if (systemPromptMode === "replace" && !projectedPrompt) {
+		debug("provider: replace mode with nothing projected, sending an empty system prompt");
+	}
 
 	// 2. Fresh child context — constructor already gave us clean Maps and empty
 	//    arrays. For a reused top-level context, clear explicitly.
@@ -1593,10 +1598,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		settings: { ...claudeCodeSettings(providerSettings), claudeMdExcludes: CLAUDE_MD_EXCLUDES },
-		systemPrompt: {
-			type: "preset", preset: "claude_code",
-			append: systemPromptAppend ? systemPromptAppend : undefined,
-		},
+		systemPrompt: buildSystemPrompt(systemPromptMode, projectedPrompt),
 		extraArgs,
 		...(effort ? { effort } : {}),
 		...(mcpServers ? { mcpServers } : {}),
@@ -1609,6 +1611,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		`model=${cliModel} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
 		`ctxFiles=${promptCapture?.contextFiles.length ?? 0} strictMcp=${strictMcpConfigEnabled}`,
+		`sysPromptMode=${systemPromptMode} sysPromptChars=${projectedPrompt?.length ?? 0}`,
 		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);
 
 	// 3. Start SDK query and claim it for this context
@@ -1777,8 +1780,15 @@ async function promptAndWait(
 	// Resolved only when the answer would be used. The throw is justified by what a
 	// miss would cost, so where it costs nothing — skills switched off, or no reader
 	// to open a skill file with — an unrelated miss must not fail the call.
+	//
+	// systemPromptMode: false suppresses Pi content here as it does on the provider
+	// path. "replace" deliberately does not strip Claude Code's preset on this path —
+	// AskClaude runs Claude Code's own tools, so the preset's tool and permission
+	// guidance is load-bearing here in a way it is not for the provider, where pi
+	// executes every tool and Claude Code starts with `tools: []`.
+	const askClaudeSystemPromptMode = resolveSystemPromptMode(providerSettings);
 	const skillReadTool = disallowedTools.includes("Read") ? "none" : "native";
-	const skillCapture = options?.appendSkills !== false && skillReadTool !== "none"
+	const skillCapture = askClaudeSystemPromptMode !== false && options?.appendSkills !== false && skillReadTool !== "none"
 		? promptCaptures.resolveOrDerive(options?.systemPrompt)
 		: undefined;
 	const skillsBlock = skillCapture
@@ -1800,7 +1810,7 @@ async function promptAndWait(
 	debug("askClaude:",
 		`mode=${mode} model=${modelId} cliModel=${cliModel} effort=${effort ?? "default"}`,
 		`isolated=${options?.isolated ?? false} resume=${resumeSessionId?.slice(0, 8) ?? "none"}`,
-		`skills=${Boolean(skillsBlock)} promptLen=${prompt.length}`);
+		`sysPromptMode=${askClaudeSystemPromptMode} skills=${Boolean(skillsBlock)} promptLen=${prompt.length}`);
 
 	// skills: [] suppresses Claude Code's own skill listing, a system-reminder naming every
 	// skill under the ~/.claude estate. The provider path gets this for free — `tools: []`

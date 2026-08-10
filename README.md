@@ -64,6 +64,7 @@ Config: `~/.pi/agent/claude-bridge.json` (global) or the project Pi config direc
   "provider": {
     "plan": "max",
     "longContextExtraUsage": false,
+    "systemPromptMode": "append",
     "strictMcpConfig": true,
     "pathToClaudeCodeExecutable": "/home/you/.nix-profile/bin/claude"
   }
@@ -83,6 +84,12 @@ Config: `~/.pi/agent/claude-bridge.json` (global) or the project Pi config direc
 `provider`:
 - `plan` (default `"pro"`) — set to `"max"` if you have a Max (or Team Premium/Enterprise) Anthropic plan. This enables Opus with 1M context.
 - `longContextExtraUsage` — set to `true` to enable 1M context models even if they cost money through Extra Usage on your plan. It enables Sonnet 4.6 with 1M on every plan and Opus 4.6 with 1M on Pro. Not needed for Opus 4.7 or 4.8.
+- `systemPromptMode` — how pi's prompt content reaches Claude Code:
+  - `"append"` (default) — Claude Code's own preset, with pi's context files, skills, and `SYSTEM.md`/`APPEND_SYSTEM.md` instructions appended.
+  - `"replace"` — pi's content is sent as the entire system prompt and Claude Code's preset is never sent. Cuts a large, fixed block of tokens from every turn, and is worth trying if you hit intermittent `400`/"out of extra usage" rejections, which are decided by system-prompt content (see `diag/EXTRA-USAGE-400.md`). The trade-off is real: the preset carries Claude Code's own output, tool, and refusal conventions, so responses change in style and sometimes in quality. With `--no-context-files --no-skills` and no `SYSTEM.md` there is nothing left to send, and the turn runs with no system prompt at all.
+  - `false` — Claude Code's preset alone; pi's content is not forwarded.
+
+  On the AskClaude path, `false` still suppresses pi's content, but `"replace"` is treated as `"append"`: AskClaude runs Claude Code's own tools, so its preset is load-bearing there in a way it isn't for the provider path, where pi executes every tool.
 - `strictMcpConfig` — block MCP servers from `~/.claude.json` / `.mcp.json` (default `true`). Cloud MCP (Gmail/Drive via claude.ai OAuth) is always blocked.
 - `autoMemoryEnabled` — enable Claude Code's auto-memory system (default `false`)
 - `pathToClaudeCodeExecutable` — path to the `claude` binary. Useful if your OS/filesystem has the SDK's bundled musl/glibc binaries in a place where they can't run. For example, with Nix you can set the binary to e.g. `"/home/you/.nix-profile/bin/claude"`.

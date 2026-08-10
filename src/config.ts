@@ -8,6 +8,11 @@ import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
+/** "append": Claude Code's preset plus Pi's portable content (default).
+ *  "replace": Pi's content alone, no Claude Code preset.
+ *  false: Claude Code's preset alone, no Pi content. */
+export type SystemPromptMode = "append" | "replace" | false;
+
 export interface Config {
 	/** Date (YYYY-MM-DD) the one-time startup notice was shown. Written by the extension, not the user. */
 	startupNoticeShown?: string;
@@ -23,6 +28,11 @@ export interface Config {
 	};
 	/** Low-level Claude Agent SDK plumbing. Most users won't need these. */
 	provider?: {
+		// How Pi's portable prompt content reaches Claude Code. "append" (default)
+		// keeps Claude Code's own preset and appends Pi's content; "replace" sends
+		// only Pi's content, so Claude Code's preset never reaches the server;
+		// false keeps the preset and forwards nothing. See README.
+		systemPromptMode?: SystemPromptMode;
 		strictMcpConfig?: boolean;
 		autoMemoryEnabled?: boolean;
 		pathToClaudeCodeExecutable?: string;
@@ -43,6 +53,17 @@ export function tryParseJson(path: string): Partial<Config> {
 		console.error(`claude-bridge: failed to parse ${path}: ${e}`);
 		return {};
 	}
+}
+
+/** An unrecognized value falls back to "append" rather than failing the session:
+ *  a typo in one config key should not take the provider down. */
+export function resolveSystemPromptMode(provider: Config["provider"] = {}): SystemPromptMode {
+	const mode = provider.systemPromptMode;
+	if (mode === "replace" || mode === false) return mode;
+	if (mode !== undefined && mode !== "append") {
+		console.error(`claude-bridge: ignoring unknown provider.systemPromptMode ${JSON.stringify(mode)}, using "append"`);
+	}
+	return "append";
 }
 
 export function claudeCodeSettings(provider: Config["provider"] = {}): { autoMemoryEnabled: boolean } {
