@@ -166,6 +166,21 @@ function resolveModel(input: string) {
 	return _resolveModel(MODELS, input);
 }
 
+// Claude Code sends rate_limit_info.resetsAt as unix *seconds*, so passing it
+// straight to `new Date()` dated a Sep 1 reset to Jan 21 1970 and printed that
+// day's local time as if it were tonight. Seconds-vs-milliseconds is decided by
+// magnitude: any plausible reset in seconds is far below the ms epoch of the
+// date this shipped. A same-day reset shows a time, anything later shows the date
+// too, since "resets at 10:13 PM" is actively misleading for a monthly bucket.
+export function formatResetsAt(resetsAt: unknown, now: Date = new Date()): string {
+	if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt) || resetsAt <= 0) return "at an unknown time";
+	const date = new Date(resetsAt < 1e11 ? resetsAt * 1000 : resetsAt);
+	if (Number.isNaN(date.getTime())) return "at an unknown time";
+	return date.toDateString() === now.toDateString()
+		? `at ${date.toLocaleTimeString()}`
+		: `${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`;
+}
+
 // --- Error handling ---
 
 function errorMessage(err: unknown): string {
@@ -1274,8 +1289,7 @@ async function consumeQuery(
 			const info = (message as any).rate_limit_info;
 			debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
 			if (info?.status === "rejected") {
-				const resetsAt = info.resetsAt ? new Date(info.resetsAt).toLocaleTimeString() : "unknown";
-				piUI?.notify(`Claude rate limited (${info.rateLimitType ?? "unknown"}) — resets at ${resetsAt}`, "warning");
+				piUI?.notify(`Claude rate limited (${info.rateLimitType ?? "unknown"}) — resets ${formatResetsAt(info.resetsAt)}`, "warning");
 			} else if (info?.status === "allowed_warning") {
 				piUI?.notify(`Claude rate limit warning: ${Math.round(info.utilization ?? 0)}% used (${info.rateLimitType ?? ""})`, "warning");
 			}
