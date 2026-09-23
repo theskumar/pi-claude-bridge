@@ -1021,7 +1021,12 @@ function updateUsage(output: AssistantMessage, usage: Record<string, number | un
 function logServedContextWindow(label: string, message: SDKMessage, model: Model<any>): void {
 	const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number; maxOutputTokens?: number }> | undefined;
 	if (!modelUsage) return;
-	for (const [k, v] of Object.entries(modelUsage)) {
+	// modelUsage accumulates across a resumed session, so after a /model switch
+	// it still lists the earlier model. Log only the current one; fall back to
+	// every entry if CC keyed it in a form we don't recognize.
+	const entries = Object.entries(modelUsage);
+	const current = entries.filter(([k]) => k.replace(/\[1m\]$/i, "") === model.id);
+	for (const [k, v] of current.length > 0 ? current : entries) {
 		debug(`${label}: served contextWindow=${v.contextWindow ?? "?"} maxOutputTokens=${v.maxOutputTokens ?? "?"} servedModel=${k} registered=${model.contextWindow}`);
 	}
 }
