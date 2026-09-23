@@ -17,6 +17,7 @@ import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx } from "./query-state.js";
 import { makePromptStream, userMessage, type PromptStream } from "./prompt-stream.js";
+import { registerLimits } from "./limits.js";
 import { claudeCodeSettings, loadConfig, markStartupNoticeShown, resolveSystemPromptMode, type Config } from "./config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import {
@@ -2024,6 +2025,12 @@ export default function (pi: ExtensionAPI) {
 	const config = loadConfig(process.cwd());
 	debug("loadConfig:", JSON.stringify(config));
 	providerSettings = config.provider ?? {};
+	registerLimits(pi, () => ({
+		cwd: process.cwd(),
+		env: { ...process.env, ...CC_CHILD_ENV },
+		...(providerSettings.pathToClaudeCodeExecutable
+			? { pathToClaudeCodeExecutable: providerSettings.pathToClaudeCodeExecutable } : {}),
+	}), () => [...activeQueryContexts].map(c => c.activeQuery).find(Boolean));
 	// We need these settings to know if we're eligible for 1M context on certain models
 	longContextSettings = {
 		plan: providerSettings.plan ?? "pro",
