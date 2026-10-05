@@ -2288,56 +2288,48 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Provider ---
 	//
-	// Registration policy across module instances (a subagent session can load
-	// this module fresh): the FIRST instance registers unconditionally at load,
-	// which is what puts claude-bridge models in the picker before any session
-	// starts. Later instances decide at session_start, when ctx.modelRegistry
-	// reveals who owns this session's registry:
+	// Registration policy across module instances. A process can load this module
+	// many times: subagent sessions load it fresh, and hosts such as pi-web call
+	// createAgentSessionServices() per request (each call loads every extension
+	// into a brand-new model registry and never starts a session).
 	//
-	// - Registry already has the provider (host passes the parent's registry down,
-	//   e.g. pi-subagents >=0.14.3): skip. Re-registering would overwrite the
-	//   parent's pinned streamSimple with this instance's fresh — empty-state —
-	//   stream fn, and the parent's next tool-result delivery would route into it.
-	// - Registry lacks the provider (host gives the child its own, e.g. older
-	//   pi-subagents forks): register, or every claude-bridge/* dispatch in the
-	//   child fails with "Model not found" (#91). Even loading the bridge via the
-	//   agent's `extensions:` frontmatter didn't help there — the module loaded,
-	//   hit the old skip-guard, and the child's registry stayed empty.
+	// Every instance registers at load, because that is the only moment a
+	// throwaway registry (pi-web's /api/models) ever sees. What differs is the
+	// stream fn:
 	//
-	// A per-instance stream fn registered into a per-instance registry is
-	// self-consistent: that session's traffic flows through this module state,
-	// which starts clean and serves only that session.
+	// - The FIRST instance claims ACTIVE_STREAM_SIMPLE_KEY and registers its own
+	//   streamClaudeAgentSdk. It is the serving instance: MARK_REBUILD_HOOKS_KEY
+	//   and the shared captures already forward other instances' events to it.
+	// - A LATER instance registers the serving instance's stream fn, not its own.
+	//   When the host passes the parent's registry down (pi-subagents >=0.14.3),
+	//   this writes back the fn that is already there, so the parent's parked
+	//   tool-result delivery never routes into a fresh, empty-state instance.
+	//   When the host gives the child its own registry (older pi-subagents forks,
+	//   pi-web), the provider exists there too, so claude-bridge/* dispatches
+	//   resolve instead of failing with "Model not found" (#91).
+	//
+	// The previous policy deferred later instances to session_start. Hosts that
+	// build registries without a session never fire it, so after the first
+	// request every pi-web model list came back without claude-bridge.
 	//
 	// On session_shutdown (including /reload), clearSession() resets
-	// ACTIVE_STREAM_SIMPLE_KEY so a freshly loaded module can register as first
-	// again.
+	// ACTIVE_STREAM_SIMPLE_KEY so a freshly loaded module can serve again.
 
 	const g = globalThis as Record<symbol, any>;
-	const providerConfig = {
+	if (!g[ACTIVE_STREAM_SIMPLE_KEY]) {
+		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+	} else {
+		debug(`provider: registering the serving instance's stream fn (module=${moduleInstanceId})`);
+	}
+	pi.registerProvider(PROVIDER_ID, {
 		baseUrl: "claude-bridge",
 		apiKey: "not-used",
 		api: "claude-bridge",
 		models: registeredModels,
 		// Cast: the Provider interface passes a TranscriptContext; the bridge takes plain
 		// Context models (toBridgeContext normalizes at the stream entry points).
-		streamSimple: streamClaudeAgentSdk as any,
-	};
-	if (!g[ACTIVE_STREAM_SIMPLE_KEY]) {
-		// First instance: store our streamSimple and register.
-		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-		pi.registerProvider(PROVIDER_ID, providerConfig);
-	} else {
-		// Later instance: register only if this session's registry lacks the provider.
-		debug(`provider: deferring registration decision to session_start (module=${moduleInstanceId})`);
-		pi.on("session_start", (_event, ctx) => {
-			if (ctx.modelRegistry.getProvider(PROVIDER_ID)) {
-				debug(`provider: registry already has ${PROVIDER_ID}, skipping registration (module=${moduleInstanceId})`);
-				return;
-			}
-			debug(`provider: registry lacks ${PROVIDER_ID}, registering (module=${moduleInstanceId})`);
-			pi.registerProvider(PROVIDER_ID, providerConfig);
-		});
-	}
+		streamSimple: g[ACTIVE_STREAM_SIMPLE_KEY] as any,
+	});
 
 	// --- AskClaude tool ---
 

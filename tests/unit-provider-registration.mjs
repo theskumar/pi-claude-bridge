@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * Provider registration across module instances (issue #91's foreground failure).
+ * Provider registration across module instances.
  *
- * The first bridge instance registers the claude-bridge provider at activation.
- * A later instance — a subagent session that loaded this module fresh — must
- * decide at session_start based on who owns its session's model registry:
- * hosts that pass the parent's registry down already have the provider
- * (re-registering would overwrite the parent's pinned stream fn), while hosts
- * that give the child its own registry need it registered or every
- * claude-bridge/* dispatch fails with "Model not found".
+ * Every bridge instance registers the claude-bridge provider at activation.
+ * Hosts can load the module many times in one process: subagent sessions load
+ * it fresh, and pi-web loads it into a brand-new registry on every
+ * /api/models request without ever starting a session. A later instance must
+ * therefore register at load (session_start may never fire) and must register
+ * the serving (first) instance's stream fn, so writing into a registry shared
+ * with the parent leaves the parent's pinned stream fn in place.
  */
 
 import { describe, it } from "node:test";
@@ -45,35 +45,44 @@ function registryWith(provider) {
 }
 
 describe("provider registration across module instances", () => {
-	it("first instance registers at activation", () => {
+	it("first instance registers its own stream fn at activation", () => {
 		const { registered } = activateWithMockPi();
 		assert.equal(registered.length, 1, "exactly one activation-time registration");
 		assert.equal(registered[0].name, PROVIDER_ID);
+		assert.equal(typeof registered[0].config.streamSimple, "function");
 	});
 
-	it("later instance registers at session_start when its registry lacks the provider (#91)", async () => {
-		// A fresh module instance: the activate-time registration is skipped, and
-		// the decision moves to session_start with the session's own registry.
-		const { default: activateFresh } = await import("../src/index.js?own-registry-child");
-		const { registered, emit } = activateWithMockPi(activateFresh);
-		assert.equal(registered.length, 0, "no activation-time registration for a later instance");
-
-		emit("session_start", {}, { modelRegistry: registryWith("other-provider") });
-		assert.equal(registered.length, 1, "session_start registers into the empty registry");
+	it("later instance registers at activation, with no session_start (pi-web /api/models)", async () => {
+		const first = activateWithMockPi();
+		const { default: activateFresh } = await import("../src/index.js?sessionless-host");
+		const { registered } = activateWithMockPi(activateFresh);
+		assert.equal(registered.length, 1, "registered without waiting for session_start");
 		assert.equal(registered[0].name, PROVIDER_ID);
-		assert.ok(registered[0].config.streamSimple, "the registration carries this instance's stream fn");
+		assert.ok(registered[0].config.models.length > 0, "the registration carries models");
+		assert.equal(
+			registered[0].config.streamSimple,
+			first.registered[0].config.streamSimple,
+			"a later instance hands out the serving instance's stream fn",
+		);
 	});
 
-	it("later instance does not re-register when the registry already has the provider", async () => {
+	it("repeated sessionless loads all register (one per throwaway registry)", async () => {
+		for (const tag of ["a", "b", "c"]) {
+			const { default: activateFresh } = await import(`../src/index.js?throwaway-${tag}`);
+			const { registered } = activateWithMockPi(activateFresh);
+			assert.equal(registered.length, 1, `load ${tag} registered`);
+		}
+	});
+
+	it("later instance never replaces the stream fn in a registry shared with the parent", async () => {
+		const parent = activateWithMockPi();
+		const parentFn = parent.registered[0].config.streamSimple;
 		const { default: activateFresh } = await import("../src/index.js?shared-registry-child");
-		const { registered, emit } = activateWithMockPi(activateFresh);
+		const child = activateWithMockPi(activateFresh);
+		assert.equal(child.registered[0].config.streamSimple, parentFn, "re-registration writes back the same fn");
 
-		// Host passed the parent's registry down: the provider is already there.
-		emit("session_start", {}, { modelRegistry: registryWith(PROVIDER_ID) });
-		assert.equal(registered.length, 0, "no overwrite of the parent's registration");
-
-		// Repeated session starts stay idempotent.
-		emit("session_start", {}, { modelRegistry: registryWith(PROVIDER_ID) });
-		assert.equal(registered.length, 0, "still no registration on a later session_start");
+		// session_start no longer registers a second time.
+		child.emit("session_start", {}, { modelRegistry: { getProvider: () => ({ name: PROVIDER_ID }) }, ui: undefined, mode: "print" });
+		assert.equal(child.registered.length, 1, "no session_start registration");
 	});
 });
