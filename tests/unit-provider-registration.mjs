@@ -40,6 +40,8 @@ function activateWithMockPi(activateFn, options = {}) {
 	return { handlers, registered, emit };
 }
 
+const sessionCtx = { cwd: "/tmp", sessionManager: { getSessionId: () => "test-session" } };
+
 function registryWith(provider) {
 	return { getProvider: (id) => (id === provider ? { name: provider } : undefined) };
 }
@@ -82,7 +84,7 @@ describe("provider registration across module instances", () => {
 		assert.equal(child.registered[0].config.streamSimple, parentFn, "re-registration writes back the same fn");
 
 		// session_start no longer registers a second time.
-		child.emit("session_start", {}, { modelRegistry: { getProvider: () => ({ name: PROVIDER_ID }) }, ui: undefined, mode: "print" });
+		child.emit("session_start", {}, { ...sessionCtx, modelRegistry: { getProvider: () => ({ name: PROVIDER_ID }) }, ui: undefined, mode: "print" });
 		assert.equal(child.registered.length, 1, "no session_start registration");
 	});
 });

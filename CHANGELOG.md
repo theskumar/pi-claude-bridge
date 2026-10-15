@@ -1,13 +1,32 @@
 # Changelog
 
-## UNRELEASED
+## Unreleased (fork)
 
 - **Fix: claude-bridge models missing from pi-web's model picker** — pi-web loads extensions into a fresh model registry on every `/api/models` request and never starts a session there. Later bridge instances waited for `session_start` to register, so only the first request after startup listed claude-bridge models. Every instance now registers at load. Later instances register the serving instance's stream fn, so a registry shared with a parent session keeps its pinned stream fn, and a child with its own registry still resolves `claude-bridge/*` (#91).
 - **Add: subscription quota controls** — serve sanitized usage snapshots over Pi events, reusing active SDK queries and using prompt-free idle reads with timeouts and cleanup.
 - **Fix: Claude subscription billing** — all Claude Code subprocesses now set `CLAUDE_CODE_ENTRYPOINT=cli`, identifying Agent SDK requests as CLI use rather than API-credit use.
 - **New: `provider.systemPromptMode`** — `"append"` (default) is the existing behavior: Claude Code's preset plus pi's projected context files, skills and `SYSTEM.md` instructions. `"replace"` sends pi's content as the whole system prompt, so the preset never reaches the server — smaller turns, and a lever against the content-dependent 400 "out of extra usage" rejections documented in `diag/EXTRA-USAGE-400.md`, at the cost of Claude Code's own output and tool conventions. `false` forwards no pi content. Ported from the `systemPromptMode` work in Saurabh's fork (originally by Jan Malte Töpperwien), rebuilt on the prompt-capture projection that landed since: pi's `SYSTEM.md` already arrives as `systemPromptOptions.customPrompt`, so replace mode reuses the same projected content append mode sends instead of rediscovering `SYSTEM.md`/`CLAUDE.md` from disk, and sub-agent prompt inheritance keeps working. On the AskClaude path `"replace"` behaves as `"append"`, since that path runs Claude Code's own tools and depends on its preset.
+
+## 0.9.3 — 2026-10-13
+
+- **Remove: compaction and branch-summary takeovers (#189)** — pi runs them natively; the bridge routes summary calls to its isolated path. Other compaction extensions should now work. Resolves #115. Thanks @sonSunnoi.
+- **Deprecate: AskClaude tool** — Show a one-time notice on first use; remove the startup reminder to opt in.
+- **Fix: Haiku 5.5 registered at 1M (#190)** — Thanks @Blue-B.
+- **Fix: hang when a stream is cut right after a tool call starts (#146)** — Tool calls now dispatch only once their block closes, so pi no longer gets a `{}`-argument call Claude Code has dropped. Thanks @andreypopp.
+- **Fix: tool result after a restart resumes the turn (#174)** — a result with no parked query ends the turn only when pi delivers it on an aborted request; otherwise (restart, crash, stall, retry) it resumes the Claude Code session. Thanks @jcwasher.
+- **Fix: Claude Code runs in the pi session's cwd (#175)** — hosts serving many sessions from one process (pi-web) spawned it in the host process cwd, so it loaded that directory's AGENTS.md and mirrored the session under the wrong project. Thanks @SoulKyu.
+- **Add: report plan usage through pi's `after_provider_response` (#171)** — Claude Code's usage updates arrive as `anthropic-ratelimit-unified-*` headers, so extensions that read usage from the built-in `anthropic` provider work with the bridge too. Thanks @fj.
+- **Fix: one-off calls honor the caller's reasoning level (#184)** — compaction summaries, `/bug-report` summaries and extension one-shots that pass `reasoning` now send it to Claude Code as `effort` instead of using its default. Thanks @roberthmms.
+- **Fix: exhausted subscription windows go straight to fallback (#183)** — the error now leads with "Claude quota exceeded", which pi does not retry, and still says "rate limit" for fallback chains. Thanks @good-nightmoon.
+- **Fix: tools with a top-level `anyOf`/`oneOf`/`allOf` schema (#180, issue #179)** — Claude Code dropped them, so a call could run twice or hang the turn. The bridge now flattens the schema the way CC's own normalizer does. Thanks @MataM15.
+
+## 0.9.2 — 2026-10-07
+
+- **Fix: synthetic failure notices no longer stream as assistant output (#162)** — keeps pre-output failover working for consumers like pi-model-fallback-alias; the notice text stays on the failed turn's error event. A notice following a stalled stream also drops the dead stream's abandoned partial blocks.
 - **Fix: system prompt sections survive prompt capture (issue #153)** — pi 0.99.2+ adds an `mcp_servers` section through its MCP extension. The transcript replay now ranks unlisted sections after the built-ins, matching pi's builder, so the capture key matches instead of failing every turn; and recorded sections are projected to Claude Code instead of being silently dropped. The failure message points at a section-order divergence instead of blaming extension load order.
 - **Fix: duplicate AGENTS.md instructions (#151)** — Exclude Claude Code's native copy, matching the existing CLAUDE.md exclusions.
+- **Bump: Agent SDK `^0.3.293`** — bundles Claude Code 2.1.293, includes Haiku 5.5.
+- **Tests: fix test isolation by lazy loading log path (#164)** — log-paths resolves debug/diag paths per call instead of at import time. Fixes issues with config tests overwriting real user settings in some situations.
 
 ## 0.9.1 — 2026-09-30
 

@@ -69,6 +69,8 @@ export function registerLimits(
 			}
 		}
 	}
+	// Test hosts may omit the event bus; real pi always provides it.
+	if (!pi.events) return;
 	const unsubscribe = pi.events.on("subscription-limits:claude:read", (event: unknown) => {
 		const id = (event as { id?: string })?.id;
 		if (stopped || typeof id !== "string") return;
