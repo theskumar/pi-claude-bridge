@@ -29,7 +29,7 @@ import { createToolServer } from "./mcp-server.js";
 import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
 import { askClaudeCallTags, askClaudeToolDescription, buildAskClaudeParams, resolveAskClaudeDefaults, resolveAskClaudeMode, type AskClaudeMode } from "./askclaude-schema.js";
 import { nonSystemMessages, toBridgeContext } from "./transcript.js";
-import { forgetSessionCwd, rememberSessionCwd, rememberSummarySession, sessionCwdFor, summarySessionFor } from "./session-cwd.js";
+import { assertSessionCwd, forgetSessionCwd, rememberSessionCwd, rememberSummarySession, sessionCwdFor, sessionCwdProblem, summarySessionFor } from "./session-cwd.js";
 import { updateUsage, type SdkUsage } from "./usage.js";
 import { rateLimitResponse } from "./rate-limit.js";
 
@@ -599,6 +599,7 @@ async function runIsolatedSummary(
 			: extractIsolatedSummaryPrompt(context.messages);
 		if (!promptText) throw new Error("runIsolatedSummary: one-off summary without a user prompt (last message is not user?)");
 		const cwd = sessionCwdFor(summarySessionFor(options?.signal) ?? options?.sessionId);
+		assertSessionCwd(cwd);
 		const compactProviderSettings = loadConfig(cwd).provider;
 		const claudeExecutable = compactProviderSettings?.pathToClaudeCodeExecutable;
 		const cliModel = claudeCodeModelId(model, longContextSettings);
@@ -1943,6 +1944,19 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		});
 		return stream;
 	}
+	// Checked before anything is claimed, like the prompt capture above: a missing cwd
+	// makes the SDK's spawn fail with a misleading "binary failed to launch" error.
+	const cwdProblem = sessionCwdProblem(sessionCwdFor(options?.sessionId));
+	if (cwdProblem) {
+		const output = newAssistantOutput(model, "", "error", cwdProblem);
+		queueMicrotask(() => {
+			stream.push({ type: "error", reason: "error", error: output });
+			markStreamComplete(stream);
+			stream.end();
+		});
+		diagDump("session_cwd_missing", { cwd: sessionCwdFor(options?.sessionId), piSessionId: options?.sessionId ?? null });
+		return stream;
+	}
 	if (systemPromptMode === "replace" && !projectedPrompt) {
 		debug("provider: replace mode with nothing projected, sending an empty system prompt");
 	}
@@ -2257,6 +2271,7 @@ async function promptAndWait(
 	},
 ): Promise<{ responseText: string; stopReason: string }> {
 	const cwd = sessionCwdFor(options?.piSessionId);
+	assertSessionCwd(cwd);
 	const requestedModel = options?.model ?? "opus";
 	const model = resolveModel(requestedModel);
 	const modelId = model?.id ?? requestedModel;

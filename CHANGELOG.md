@@ -2,6 +2,7 @@
 
 ## Unreleased (fork)
 
+- **Fix: a removed session cwd fails with its real cause** — when a session's cwd no longer exists, the Agent SDK's spawn fails with ENOENT and reports "native binary ... exists but failed to launch", blaming libc. pi-web causes this when it resumes a sub-agent whose isolation worktree it removed at the end of the previous run. The provider, summary and AskClaude paths now check the cwd before spawning, and fail the turn with a message that names the missing directory.
 - **Fix: claude-bridge models missing from pi-web's model picker** — pi-web loads extensions into a fresh model registry on every `/api/models` request and never starts a session there. Later bridge instances waited for `session_start` to register, so only the first request after startup listed claude-bridge models. Every instance now registers at load. Later instances register the serving instance's stream fn, so a registry shared with a parent session keeps its pinned stream fn, and a child with its own registry still resolves `claude-bridge/*` (#91).
 - **Add: subscription quota controls** — serve sanitized usage snapshots over Pi events, reusing active SDK queries and using prompt-free idle reads with timeouts and cleanup.
 - **Fix: Claude subscription billing** — all Claude Code subprocesses now set `CLAUDE_CODE_ENTRYPOINT=cli`, identifying Agent SDK requests as CLI use rather than API-credit use.

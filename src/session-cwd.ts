@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+
 // Pi session id -> cwd. In the pi CLI process.cwd() is the session's cwd, but a
 // host serving many sessions from one process (pi-web) has a single process cwd,
 // so Claude Code would run in, and load project instructions from, the host's
@@ -35,4 +37,30 @@ export function forgetSessionCwd(sessionId: string): void {
 
 export function sessionCwdFor(sessionId: string | null | undefined): string {
 	return (sessionId ? store().get(sessionId) : undefined) ?? process.cwd();
+}
+
+/** Why `cwd` cannot host a Claude Code process, or undefined when it can.
+ *
+ *  Spawning in a missing directory fails with ENOENT, and the Agent SDK reports
+ *  every spawn ENOENT as "native binary ... exists but failed to launch", blaming
+ *  libc. The real cause is usually a host that removed the directory after the
+ *  session opened it: pi-web deletes a sub-agent's isolation worktree when its run
+ *  ends, then resumes the same session in that path. Name the directory instead. */
+export function sessionCwdProblem(cwd: string): string | undefined {
+	let isDirectory: boolean;
+	try {
+		isDirectory = statSync(cwd).isDirectory();
+	} catch {
+		return `Session cwd ${cwd} no longer exists, so Claude Code cannot start there. `
+			+ `A host may have removed it after the session opened (pi-web removes a sub-agent's isolation worktree when its run ends). `
+			+ `Recreate the directory or start a new session.`;
+	}
+	if (!isDirectory) return `Session cwd ${cwd} is not a directory, so Claude Code cannot start there.`;
+	return undefined;
+}
+
+/** Throws sessionCwdProblem's message. For paths that already turn throws into a failed turn. */
+export function assertSessionCwd(cwd: string): void {
+	const problem = sessionCwdProblem(cwd);
+	if (problem) throw new Error(problem);
 }

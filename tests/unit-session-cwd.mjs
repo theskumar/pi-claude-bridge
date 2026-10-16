@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rememberSessionCwd, forgetSessionCwd, sessionCwdFor } from "../src/session-cwd.ts";
+import { rememberSessionCwd, forgetSessionCwd, sessionCwdFor, sessionCwdProblem } from "../src/session-cwd.ts";
 import activate, { __test } from "../src/index.js";
 
 const KEY = Symbol.for("claude-bridge:sessionCwds");
@@ -65,5 +65,38 @@ describe("streamSimple", () => {
 
 		await providerConfig.streamSimple(providerConfig.models[0], { messages: [{ role: "user", content: "hi", timestamp: 0 }], tools: [] }, { sessionId: "s-web" }).result();
 		assert.equal(queryCwd, sessionCwd);
+	});
+});
+
+describe("missing session cwd", () => {
+	it("sessionCwdProblem names a missing directory and accepts an existing one", () => {
+		const dir = mkdtempSync(join(tmpdir(), "claude-bridge-cwd-"));
+		assert.equal(sessionCwdProblem(dir), undefined);
+		rmSync(dir, { recursive: true, force: true });
+		assert.match(sessionCwdProblem(dir), /no longer exists/);
+		assert.ok(sessionCwdProblem(dir).includes(dir));
+	});
+
+	it("fails the turn with the cwd named and never spawns Claude Code", async (t) => {
+		const gone = mkdtempSync(join(tmpdir(), "claude-bridge-gone-"));
+		rmSync(gone, { recursive: true, force: true });
+		const handlers = {};
+		let providerConfig;
+		activate({
+			on: (name, fn) => { (handlers[name] ??= []).push(fn); },
+			registerProvider: (_name, config) => { providerConfig = config; },
+			registerTool: () => {},
+		});
+		for (const fn of handlers.session_start) fn({}, { cwd: gone, sessionManager: { getSessionId: () => "s-gone" } });
+		t.after(() => forgetSessionCwd("s-gone"));
+
+		let spawned = false;
+		__test.setQuery(() => { spawned = true; throw new Error("must not spawn"); });
+		t.after(() => __test.setQuery(null));
+
+		const result = await providerConfig.streamSimple(providerConfig.models[0], { messages: [{ role: "user", content: "hi", timestamp: 0 }], tools: [] }, { sessionId: "s-gone" }).result();
+		assert.equal(spawned, false);
+		assert.equal(result.stopReason, "error");
+		assert.match(result.errorMessage, /no longer exists/);
 	});
 });
